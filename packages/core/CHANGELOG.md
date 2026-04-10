@@ -1,5 +1,17 @@
 # @browserbasehq/stagehand
 
+## 3.3.0
+
+### Minor Changes
+
+- [#1980](https://github.com/browserbase/stagehand/pull/1980) [`e471d2e`](https://github.com/browserbase/stagehand/commit/e471d2e89d41bac4e9b907ee9c0d7adc36828104) Thanks [@shrey150](https://github.com/shrey150)! - Support Browserbase verified session settings and bump the Browserbase SDK.
+
+### Patch Changes
+
+- [#1983](https://github.com/browserbase/stagehand/pull/1983) [`8543c11`](https://github.com/browserbase/stagehand/commit/8543c11f6b4816f5c94fefdc8083f3616b987b22) Thanks [@github-actions](https://github.com/apps/github-actions)! - Add variable substitution to the keys tool in both live execution and cache replay paths. When keys steps with `method="type"` contain `%variableName%` tokens, they are now resolved against the provided variables. This brings the keys tool to parity with the type tool's variable handling.
+
+- [#1973](https://github.com/browserbase/stagehand/pull/1973) [`14b64ec`](https://github.com/browserbase/stagehand/commit/14b64ec7d226a3eb0ce1c19937f14581e61b7a85) Thanks [@monadoid](https://github.com/monadoid)! - Enable strict structured outputs for supported model paths.
+
 ## 3.2.1
 
 ### Patch Changes
