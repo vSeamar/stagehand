@@ -72,6 +72,48 @@ function prependSystemMessage(
   ];
 }
 
+/**
+ * Wraps each tool in the provided ToolSet so that the `beforeAct` callback
+ * fires immediately before each tool's execute() runs. The hook receives the
+ * tool name and parsed input arguments.
+ *
+ * Errors thrown by the hook are caught and logged, never blocking tool execution.
+ */
+function wrapToolsWithBeforeAct(
+  tools: ToolSet,
+  beforeAct: (args: {
+    toolName: string;
+    toolInput: unknown;
+  }) => Promise<void> | void,
+  logger: (message: LogLine) => void,
+): ToolSet {
+  const wrapped: ToolSet = {};
+  for (const [name, originalTool] of Object.entries(tools)) {
+    const origExecute = originalTool.execute;
+    if (typeof origExecute !== "function") {
+      wrapped[name] = originalTool;
+      continue;
+    }
+    wrapped[name] = {
+      ...originalTool,
+      execute: async (input: unknown, opts: unknown) => {
+        try {
+          await beforeAct({ toolName: name, toolInput: input });
+        } catch (err) {
+          logger({
+            category: "agent",
+            message: `beforeAct hook threw for tool "${name}": ${getErrorMessage(err)}`,
+            level: 1,
+          });
+        }
+        // @ts-expect-error — forward original args as-is
+        return origExecute(input, opts);
+      },
+    } as (typeof tools)[string];
+  }
+  return wrapped;
+}
+
 export class V3AgentHandler {
   private v3: V3;
   private logger: (message: LogLine) => void;
@@ -368,10 +410,14 @@ export class V3AgentHandler {
         }
       }
 
+      const toolsForModel = callbacks?.beforeAct
+        ? wrapToolsWithBeforeAct(allTools, callbacks.beforeAct, this.logger)
+        : allTools;
+
       const result = await this.llmClient.generateText({
         model: wrappedModel,
         messages: prependSystemMessage(systemPrompt, messages),
-        tools: allTools,
+        tools: toolsForModel,
         stopWhen: (result) => this.handleStop(result, maxSteps),
         temperature: 1,
         toolChoice: "auto",
@@ -504,12 +550,16 @@ export class V3AgentHandler {
       rejectResult(error);
     };
 
+    const streamToolsForModel = callbacks?.beforeAct
+      ? wrapToolsWithBeforeAct(allTools, callbacks.beforeAct, this.logger)
+      : allTools;
+
     let streamResult: ReturnType<typeof this.llmClient.streamText>;
     try {
       streamResult = this.llmClient.streamText({
         model: wrappedModel,
         messages: prependSystemMessage(systemPrompt, messages),
-        tools: allTools,
+        tools: streamToolsForModel,
         stopWhen: (result) => this.handleStop(result, maxSteps),
         temperature: 1,
         toolChoice: "auto",

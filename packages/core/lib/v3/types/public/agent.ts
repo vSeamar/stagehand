@@ -136,6 +136,25 @@ export interface AgentCallbacks {
   onStepFinish?:
     | GenerateTextOnStepFinishCallback<ToolSet>
     | StreamTextOnStepFinishCallback<ToolSet>;
+  /**
+   * Callback called IMMEDIATELY BEFORE each tool's execute() function runs.
+   * Fires after the LLM has decided what action to take but before the action
+   * (click, type, scroll, etc.) is actually performed on the page.
+   *
+   * Use this to animate a cursor, show a visual indicator, collect zoom metadata,
+   * or otherwise react to the agent's next action before it executes.
+   *
+   * The hook receives the tool name and the parsed input arguments. For
+   * coordinate-based tools (click, type, dragAndDrop), the input typically
+   * includes `coordinates: [x, y]` and `describe: string`.
+   *
+   * If the hook throws or rejects, the error is logged but does NOT block the
+   * tool execution — the agent will continue as if the hook didn't exist.
+   */
+  beforeAct?: (args: {
+    toolName: string;
+    toolInput: unknown;
+  }) => Promise<void> | void;
 }
 
 /**
