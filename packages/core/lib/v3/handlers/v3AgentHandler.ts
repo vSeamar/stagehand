@@ -77,7 +77,13 @@ function prependSystemMessage(
  * fires immediately before each tool's execute() runs. The hook receives the
  * tool name and parsed input arguments.
  *
- * Errors thrown by the hook are caught and logged, never blocking tool execution.
+ * VETO PATH: if beforeAct throws an Error carrying a truthy `__blockAction`
+ * property, the tool's real execute() is SKIPPED and a synthetic
+ * `{ blocked: true, reason, toolName }` result is returned instead, so the
+ * model observes the block as the tool's output and chooses another action.
+ *
+ * Any OTHER thrown error keeps the legacy behavior: it is caught, logged, and
+ * tool execution proceeds as if the hook had not run (backward compatible).
  */
 function wrapToolsWithBeforeAct(
   tools: ToolSet,
@@ -100,6 +106,24 @@ function wrapToolsWithBeforeAct(
         try {
           await beforeAct({ toolName: name, toolInput: input });
         } catch (err) {
+          // Veto path: a beforeAct hook can BLOCK an action (not just observe
+          // it) by throwing an error with a truthy `__blockAction` flag. We
+          // skip the real tool execution and hand the model a synthetic result
+          // describing the block so it picks a different action instead of
+          // performing something irreversible (delete/send/publish/pay/etc.).
+          if (
+            err &&
+            typeof err === "object" &&
+            (err as { __blockAction?: unknown }).__blockAction
+          ) {
+            const reason = getErrorMessage(err);
+            logger({
+              category: "agent",
+              message: `beforeAct VETOED tool "${name}": ${reason}`,
+              level: 1,
+            });
+            return { blocked: true, reason, toolName: name };
+          }
           logger({
             category: "agent",
             message: `beforeAct hook threw for tool "${name}": ${getErrorMessage(err)}`,
@@ -420,7 +444,12 @@ export class V3AgentHandler {
         tools: toolsForModel,
         stopWhen: (result) => this.handleStop(result, maxSteps),
         temperature: 1,
-        toolChoice: "auto",
+        // "required" (not "auto"): force a tool call every step so the model
+        // cannot end the run by replying with reasoning-text-only (which the AI
+        // SDK treats as "finished"). It finishes explicitly by calling done(),
+        // which handleStop() catches. Fixes premature run-termination where the
+        // model says "I'm not done yet" but emits no tool call.
+        toolChoice: "required",
 
         prepareStep: this.createPrepareStep(
           callbacks?.prepareStep,
@@ -562,7 +591,11 @@ export class V3AgentHandler {
         tools: streamToolsForModel,
         stopWhen: (result) => this.handleStop(result, maxSteps),
         temperature: 1,
-        toolChoice: "auto",
+        // "required" (not "auto"): force a tool call every step so the model
+        // cannot end the run by replying with reasoning-text-only. It finishes
+        // by calling done(), which handleStop() catches. Fixes premature
+        // run-termination (model says "not done yet" but emits no tool call).
+        toolChoice: "required",
         prepareStep: this.createPrepareStep(
           callbacks?.prepareStep,
           captchaSolver,
@@ -716,9 +749,38 @@ export class V3AgentHandler {
     result: Parameters<ReturnType<typeof stepCountIs>>[0],
     maxSteps: number,
   ): boolean | PromiseLike<boolean> {
-    const lastStep = result.steps[result.steps.length - 1];
+    const steps = result.steps;
+    const lastStep = steps[steps.length - 1];
     if (lastStep?.toolCalls?.some((tc) => tc.toolName === "done")) {
       return true;
+    }
+    // Trailing-think guard. Because we set toolChoice:"required" (so the model
+    // can't end a run with bare reasoning text), a model that believes the task
+    // is finished will dither — emitting the no-op `think` tool over and over
+    // instead of calling done(). That adds ~15-20s of dead, non-visible tail
+    // time to every recording. Detect N consecutive think-only steps (a tool
+    // call was made, but every call in the step was `think`) and treat it as
+    // completion. ensureDone() still issues the real done() afterward, so the
+    // run finalizes correctly. N=3 is conservative: a single think-then-act or
+    // think-think-act planning sequence is never cut short.
+    const THINK_STREAK = 3;
+    if (steps.length >= THINK_STREAK) {
+      const tailIsThinkOnly = steps
+        .slice(-THINK_STREAK)
+        .every(
+          (s) =>
+            Array.isArray(s.toolCalls) &&
+            s.toolCalls.length > 0 &&
+            s.toolCalls.every((tc) => tc.toolName === "think"),
+        );
+      if (tailIsThinkOnly) {
+        this.logger({
+          category: "agent",
+          message: `Ending run: ${THINK_STREAK} consecutive think-only steps with no done() — model is dithering after task completion.`,
+          level: 1,
+        });
+        return true;
+      }
     }
     return stepCountIs(maxSteps)(result);
   }

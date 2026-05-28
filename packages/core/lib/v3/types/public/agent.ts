@@ -150,6 +150,12 @@ export interface AgentCallbacks {
    *
    * If the hook throws or rejects, the error is logged but does NOT block the
    * tool execution — the agent will continue as if the hook didn't exist.
+   *
+   * VETO EXCEPTION: if the thrown error carries a truthy `__blockAction`
+   * property, the tool's execute() is SKIPPED and the agent receives a
+   * synthetic `{ blocked: true, reason, toolName }` result in its place. Use
+   * this to enforce a hard safety policy (e.g. blocking irreversible actions
+   * on a live site) that the model cannot ignore.
    */
   beforeAct?: (args: {
     toolName: string;

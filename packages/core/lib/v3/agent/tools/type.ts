@@ -67,7 +67,18 @@ export const typeTool = (v3: V3, provider?: string, variables?: Variables) => {
           returnXpath: shouldCollectXpath,
         });
 
-        await page.type(actualText);
+        // Human-paced typing for demo videos. Default 90ms/char (~100 WPM)
+        // reads naturally on screen — instant typing felt jarring and made
+        // the AI-response wait look like the agent had skipped step 3.
+        // Override via env: STAGEHAND_TYPE_DELAY_MS=120 for slower, =0 to
+        // restore the previous instant-fill behavior.
+        const __typeDelayMs = (() => {
+          const raw = process.env.STAGEHAND_TYPE_DELAY_MS;
+          if (raw === undefined || raw === "") return 90;
+          const n = Number(raw);
+          return Number.isFinite(n) && n >= 0 ? n : 90;
+        })();
+        await page.type(actualText, { delay: __typeDelayMs });
 
         const screenshotBase64 = await waitAndCaptureScreenshot(page);
 
